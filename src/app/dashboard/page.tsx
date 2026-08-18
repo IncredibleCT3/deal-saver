@@ -36,13 +36,17 @@ export default async function DashboardPage() {
           Your dashboard
         </h1>
         <div className="mt-8 rounded-2xl border border-dashed border-slate-300 bg-white p-10">
-          <h2 className="text-xl font-semibold text-slate-900">
-            Foundation complete
-          </h2>
+          <h2 className="text-xl font-semibold text-slate-900">Your watchlist</h2>
           <p className="mt-2 max-w-xl leading-7 text-slate-600">
-            Your authenticated workspace is ready. Product watchlist features
-            will be added in the next MVP phase.
+            Add products manually, keep their current prices in one place, and
+            set optional target prices.
           </p>
+          <Link
+            href="/watchlist"
+            className="mt-6 inline-block rounded-lg bg-emerald-600 px-5 py-3 font-medium text-white hover:bg-emerald-700"
+          >
+            Open watchlist
+          </Link>
         </div>
       </section>
     </main>
