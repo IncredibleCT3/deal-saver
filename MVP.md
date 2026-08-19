@@ -19,7 +19,7 @@ If a feature is described in `REQUIREMENTS.md` but not included here, do not bui
 Build a web app where a user can:
 
 1. Create an account
-2. Paste a product URL from a supported retailer
+2. Paste a product URL from an ecommerce website
 3. Save the product to a watchlist
 4. See its current price
 5. See historical prices
@@ -77,15 +77,17 @@ Do not introduce Kubernetes, microservices, Kafka, or other heavy infrastructure
 
 ---
 
-## 5. Supported Retailers
+## 5. Supported Product Pages
 
-Start with **one retailer integration**.
+Use one generic, self-learning product extraction flow across ecommerce domains.
 
-Do not attempt to support the whole internet.
+The MVP should attempt extraction only when a public product page can be fetched safely from the server and exposes sufficiently reliable product metadata. It does not guarantee support for every website.
 
-The integration layer should still be structured so additional retailers can be added later.
+Prefer saved deterministic profiles and static structured extraction. A bounded, generic browser-rendering fallback may be used only for successfully fetched JavaScript application shells. A low-cost AI profiler may generate a reusable declarative profile only after deterministic extraction has failed and usable page content was obtained.
 
-Once the first retailer works reliably, add a second retailer.
+If a site blocks or withholds server-side requests, return a controlled unavailable error. Do not use browser rendering or AI to work around 403, 429, CAPTCHA, or explicit anti-bot denial responses. Do not use proxies, stealth tooling, CAPTCHA bypasses, paid scraping networks, or retailer-specific workarounds.
+
+Do not require a separate adapter for each retailer. Retailer-specific overrides may be added later only when evidence shows that a valuable domain cannot be handled cleanly by the generic extractor.
 
 ---
 
@@ -102,8 +104,10 @@ The server should attempt to extract:
 - Product name
 - Product image
 - Current price
-- Retailer name
+- Source/store hostname or display name
 - Canonical URL if available
+- Currency
+- Whether the price is exact or a starting price for a product family
 
 The user should then be able to save the product.
 
@@ -146,7 +150,7 @@ Display:
 
 - Product image
 - Product name
-- Retailer
+- Source/store
 - Current price
 - Target price
 - Lowest recorded price
@@ -210,7 +214,7 @@ The notification should contain:
 - Old price
 - New price
 - Amount saved
-- Retailer
+- Source/store
 - Product link
 
 Push notifications are out of scope.
@@ -239,11 +243,17 @@ Do not refresh prices every few minutes.
 
 - id
 - user_id
-- retailer
+- retailer (source/store hostname or display name)
 - product_url
 - product_name
 - image_url
 - current_price
+- currency
+- product_type
+- price_kind
+- source_domain
+- extraction_confidence
+- site_profile_id when a reusable profile was used
 - target_price
 - last_checked_at
 - created_at
@@ -270,32 +280,35 @@ Use Supabase Auth for users rather than creating unnecessary custom authenticati
 
 ---
 
-## 14. Retailer Integration Structure
+## 14. Product Extraction Structure
 
-Create a simple adapter/interface.
+Create a reusable generic fetch-and-extract flow with clear boundaries between:
 
-Example conceptual structure:
+- URL validation and safe server-side HTML fetching
+- Product metadata extraction
+- Product normalization
+- Declarative profile matching and execution
+- Optional browser rendering for JavaScript application shells
+- Optional AI profile generation and validation
+- Watchlist persistence
 
-`lib/retailers/`
+The generic extraction logic must not contain retailer names and must not require one adapter per retailer. Profiles are associated with a normalized domain plus a validated product-page path pattern so one domain may have multiple templates.
 
-- `types.ts`
-- `index.ts`
-- `retailer-one.ts`
-
-Each retailer adapter should expose something conceptually similar to:
-
-- `supportsUrl(url)`
-- `getProduct(url)`
-
-`getProduct()` should return normalized data such as:
+Normalized product data should include:
 
 - name
-- price
-- imageUrl
-- retailer
-- url
+- current price
+- image URL
+- source/store hostname or display name
+- canonical/product URL
+- currency
+- `single_product` or `product_family`
+- `exact` or `starting_at` price semantics
+- extraction confidence
 
-Do not scatter retailer-specific scraping logic throughout UI components or API routes.
+Profiles contain declarative, allowlisted extraction recipes interpreted by trusted application code. Never evaluate AI-generated JavaScript or other executable instructions. AI-generated profiles begin as candidates and must be executed and validated against the source page before use.
+
+Keep external-page fetching and parsing out of UI components. Retailer-specific overrides may be introduced in the future only when justified, and should remain isolated from the generic path.
 
 ---
 
@@ -303,11 +316,11 @@ Do not scatter retailer-specific scraping logic throughout UI components or API 
 
 Handle common failures clearly:
 
-- Unsupported retailer
-- Invalid URL
+- Invalid or unsafe URL
+- Unsupported product page
 - Product not found
 - Price not found
-- Retailer temporarily unavailable
+- Source website temporarily unavailable
 - Product page changed
 - Network failure
 
@@ -321,7 +334,15 @@ Minimum requirements:
 
 - Users may only access their own tracked products
 - Use Supabase Row Level Security where appropriate
-- Validate URLs server-side
+- Accept HTTPS product URLs only during the MVP
+- Reject URL credentials, nonstandard ports, localhost, and private, reserved, or link-local IP destinations
+- Resolve hostnames safely before fetching and defend against DNS rebinding where practical
+- Validate every redirect destination manually and enforce a redirect limit
+- Enforce request timeouts and response-size limits
+- Require an HTML-compatible content type
+- Keep privileged Supabase secret or service-role keys server-only
+- Treat fetched page content as untrusted input, including when it is sent to the AI profiler
+- Validate every declarative profile field and reject executable or unbounded instructions
 - Do not expose service-role secrets to the browser
 - Validate numeric price inputs
 - Rate-limit product creation if abuse becomes an issue
@@ -351,7 +372,7 @@ Do **not** build these during the MVP:
 - Whole-store scraping
 - Store bookmarking
 - Personalized store deal feeds
-- Universal retailer support
+- Guaranteed support for every ecommerce website
 - Cross-store product matching
 - Automatic cheapest-price comparison
 - AI shopping assistant
@@ -397,12 +418,26 @@ Build in this order:
 - Remove product
 - Edit target price
 
-### Phase 3 — First Retailer
+### Phase 3 — Generic Product Extraction
 
-- Retailer adapter interface
-- First retailer parser
-- Extract product information
-- Save initial price
+- Accept a product URL plus an optional target price
+- Validate the URL and fetch public HTML server-side with strong SSRF protections
+- Extract product information in this order:
+  1. Schema.org Product JSON-LD
+  2. Product/Offer JSON-LD inside arrays or `@graph`
+  3. HTML microdata or semantic product metadata
+  4. Conservative generic HTML/meta fallbacks when confidence is high enough
+- Do not guess ambiguous prices
+- Normalize product name, current price, image URL, source/store, and canonical/product URL
+- Distinguish exact single-product prices from product-family starting prices
+- Reuse validated domain/template extraction profiles across users
+- Attempt static/profile extraction before any browser or AI work
+- Use bounded Cloudflare Browser Run rendering only for successfully fetched JavaScript application shells and only when configured
+- Use a configurable low-cost AI model to generate declarative candidate profiles only when deterministic extraction fails and usable page content exists
+- Validate candidate profiles by executing them against the source page before storing or using them
+- Track lightweight profile success/failure and AI/browser cost metadata
+- Save the normalized product and initial price to the authenticated user's existing watchlist
+- Return a controlled unsupported-product error when reliable extraction is not possible
 
 ### Phase 4 — Price History
 
@@ -424,9 +459,9 @@ Build in this order:
 - Click tracking
 - Affiliate-ready retailer configuration
 
-### Phase 7 — Second Retailer
+### Phase 7 — Optional Retailer Overrides
 
-Only add the second retailer after the first integration and refresh pipeline are stable.
+Only add a retailer-specific override after the generic extraction and refresh pipeline are stable and a justified domain-specific need has been demonstrated.
 
 ---
 
@@ -435,7 +470,7 @@ Only add the second retailer after the first integration and refresh pipeline ar
 The MVP is successful when the following flow works reliably:
 
 1. User creates an account
-2. User pastes a supported retailer URL
+2. User pastes an ecommerce product URL
 3. Deal Saver recognizes the product
 4. Deal Saver saves the product and current price
 5. User sees the product in their watchlist
@@ -443,6 +478,6 @@ The MVP is successful when the following flow works reliably:
 7. A new price is stored in history
 8. The watchlist reflects the new price
 9. An alert email is sent when the target condition is reached
-10. User can click through to the retailer
+10. User can click through to the source website
 
 At that point, stop adding features and test whether real users actually find the product useful.

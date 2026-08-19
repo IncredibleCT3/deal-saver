@@ -38,7 +38,7 @@ export default async function DashboardPage() {
         <div className="mt-8 rounded-2xl border border-dashed border-slate-300 bg-white p-10">
           <h2 className="text-xl font-semibold text-slate-900">Your watchlist</h2>
           <p className="mt-2 max-w-xl leading-7 text-slate-600">
-            Add products manually, keep their current prices in one place, and
+            Add products by URL, keep their current prices in one place, and
             set optional target prices.
           </p>
           <Link

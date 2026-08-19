@@ -7,14 +7,20 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
+    "probe-product": "tsx --conditions=react-server --env-file=.env.local scripts/probe-product.ts",
+    "test": "tsx --conditions=react-server --test src/lib/product-extraction/*.test.ts",
+    "test:ai-profile": "tsx --conditions=react-server --test src/lib/product-extraction/ai-profiler.integration.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.3",
+    "cheerio": "1.0.0",
+    "ipaddr.js": "2.5.0",
     "next": "16.3.1",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -24,6 +30,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
     "tailwindcss": "^4",
+    "tsx": "^4.20.3",
     "typescript": "^5"
   }
 }

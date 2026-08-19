@@ -22,22 +22,26 @@ type TrackedProduct = {
   product_name: string;
   image_url: string | null;
   current_price: string | number;
+  currency: string;
+  price_kind: "exact" | "starting_at";
   target_price: string | number | null;
   last_checked_at: string;
 };
-
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-});
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium",
   timeStyle: "short",
 });
 
-function formatPrice(value: string | number) {
-  return currencyFormatter.format(Number(value));
+function formatPrice(value: string | number, currency: string) {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+    }).format(Number(value));
+  } catch {
+    return `${currency} ${Number(value).toFixed(2)}`;
+  }
 }
 
 export default async function WatchlistPage({
@@ -55,12 +59,21 @@ export default async function WatchlistPage({
   const { data, error } = await supabase
     .from("tracked_products")
     .select(
-      "id, retailer, product_url, product_name, image_url, current_price, target_price, last_checked_at",
+      "id, retailer, product_url, product_name, image_url, current_price, currency, price_kind, target_price, last_checked_at",
     )
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
   if (error) {
+    if (process.env.NODE_ENV === "development") {
+      console.error("Watchlist query failed.", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
+    }
+
     throw new Error("Unable to load the watchlist.");
   }
 
@@ -98,8 +111,8 @@ export default async function WatchlistPage({
           Products you&apos;re watching
         </h1>
         <p className="mt-3 max-w-2xl leading-7 text-slate-600">
-          Add products manually for now. Automatic product details and price
-          checks will come in later MVP phases.
+          Paste a product URL and Deal Saver will retrieve reliable product
+          details exposed by the source website before saving it.
         </p>
       </header>
 
@@ -116,27 +129,10 @@ export default async function WatchlistPage({
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
         <h2 className="text-xl font-semibold text-slate-950">Add a product</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          Public HTTPS product pages with structured product data work best.
+        </p>
         <form action={addTrackedProduct} className="mt-6 grid gap-5 md:grid-cols-2">
-          <label className="block text-sm font-medium text-slate-800">
-            Product name
-            <input
-              name="product_name"
-              type="text"
-              maxLength={200}
-              required
-              className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-            />
-          </label>
-          <label className="block text-sm font-medium text-slate-800">
-            Retailer
-            <input
-              name="retailer"
-              type="text"
-              maxLength={100}
-              required
-              className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-            />
-          </label>
           <label className="block text-sm font-medium text-slate-800 md:col-span-2">
             Product URL
             <input
@@ -144,31 +140,7 @@ export default async function WatchlistPage({
               type="url"
               inputMode="url"
               maxLength={2048}
-              placeholder="https://retailer.example/product"
-              required
-              className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-            />
-          </label>
-          <label className="block text-sm font-medium text-slate-800 md:col-span-2">
-            Image URL <span className="font-normal text-slate-500">(optional)</span>
-            <input
-              name="image_url"
-              type="url"
-              inputMode="url"
-              maxLength={2048}
-              placeholder="https://retailer.example/product-image.jpg"
-              className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-            />
-          </label>
-          <label className="block text-sm font-medium text-slate-800">
-            Current price
-            <input
-              name="current_price"
-              type="number"
-              inputMode="decimal"
-              min="0"
-              max="9999999999.99"
-              step="0.01"
+              placeholder="https://shop.example/product/..."
               required
               className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
             />
@@ -185,12 +157,12 @@ export default async function WatchlistPage({
               className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
             />
           </label>
-          <div className="md:col-span-2">
+          <div className="flex items-end">
             <button
               type="submit"
               className="rounded-lg bg-emerald-600 px-5 py-3 font-medium text-white hover:bg-emerald-700"
             >
-              Add to watchlist
+              Check and add to watchlist
             </button>
           </div>
         </form>
@@ -224,7 +196,7 @@ export default async function WatchlistPage({
               >
                 <div className="flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-slate-100">
                   {product.image_url ? (
-                    // User-provided remote hosts cannot be allowlisted for next/image.
+                    // Product images come from source websites at runtime.
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={product.image_url}
@@ -259,9 +231,13 @@ export default async function WatchlistPage({
                       </a>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm text-slate-500">Current price</p>
+                      <p className="text-sm text-slate-500">
+                        {product.price_kind === "starting_at"
+                          ? "Starting at"
+                          : "Current price"}
+                      </p>
                       <p className="text-2xl font-semibold text-slate-950">
-                        {formatPrice(product.current_price)}
+                        {formatPrice(product.current_price, product.currency)}
                       </p>
                     </div>
                   </div>

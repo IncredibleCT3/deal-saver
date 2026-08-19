@@ -2,6 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import {
+  getProductResolution,
+  getProductExtractionErrorMessage,
+  ProductExtractionError,
+} from "@/lib/product-extraction";
 import { createClient } from "@/lib/supabase/server";
 
 const UUID_PATTERN =
@@ -16,81 +21,19 @@ function watchlistRedirect(
   redirect(`/watchlist?${params.toString()}`);
 }
 
-function readRequiredText(
-  formData: FormData,
-  name: string,
-  label: string,
-  maxLength: number,
-) {
-  const rawValue = formData.get(name);
+function readProductUrl(formData: FormData) {
+  const rawValue = formData.get("product_url");
   const value = typeof rawValue === "string" ? rawValue.trim() : "";
 
   if (!value) {
-    watchlistRedirect("error", `${label} is required.`);
-  }
-
-  if (value.length > maxLength) {
-    watchlistRedirect(
-      "error",
-      `${label} must be ${maxLength} characters or fewer.`,
-    );
-  }
-
-  return value;
-}
-
-function readUrl(
-  formData: FormData,
-  name: string,
-  label: string,
-  required: true,
-): string;
-function readUrl(
-  formData: FormData,
-  name: string,
-  label: string,
-  required: false,
-): string | null;
-function readUrl(
-  formData: FormData,
-  name: string,
-  label: string,
-  required: boolean,
-) {
-  const rawValue = formData.get(name);
-  const value = typeof rawValue === "string" ? rawValue.trim() : "";
-
-  if (!value && !required) {
-    return null;
-  }
-
-  if (!value) {
-    watchlistRedirect("error", `${label} is required.`);
+    watchlistRedirect("error", "A product URL is required.");
   }
 
   if (value.length > 2048) {
-    watchlistRedirect("error", `${label} is too long.`);
+    watchlistRedirect("error", "The product URL is too long.");
   }
 
-  try {
-    const url = new URL(value);
-
-    if (
-      !["http:", "https:"].includes(url.protocol) ||
-      !url.hostname ||
-      url.username ||
-      url.password
-    ) {
-      throw new Error("Invalid URL");
-    }
-
-    return url.href;
-  } catch {
-    watchlistRedirect(
-      "error",
-      `${label} must be a valid HTTP or HTTPS URL.`,
-    );
-  }
+  return value;
 }
 
 function readPrice(
@@ -152,26 +95,7 @@ async function requireUser() {
 }
 
 export async function addTrackedProduct(formData: FormData) {
-  const productName = readRequiredText(
-    formData,
-    "product_name",
-    "Product name",
-    200,
-  );
-  const retailer = readRequiredText(formData, "retailer", "Retailer", 100);
-  const productUrl = readUrl(
-    formData,
-    "product_url",
-    "Product URL",
-    true,
-  );
-  const imageUrl = readUrl(formData, "image_url", "Image URL", false);
-  const currentPrice = readPrice(
-    formData,
-    "current_price",
-    "Current price",
-    true,
-  );
+  const productUrl = readProductUrl(formData);
   const targetPrice = readPrice(
     formData,
     "target_price",
@@ -179,14 +103,43 @@ export async function addTrackedProduct(formData: FormData) {
     false,
   );
   const { supabase, userId } = await requireUser();
+  let resolution: Awaited<ReturnType<typeof getProductResolution>>;
+
+  try {
+    resolution = await getProductResolution(productUrl, {
+      requestedBy: userId,
+    });
+  } catch (error) {
+    if (error instanceof ProductExtractionError) {
+      console.error("Product extraction failed.", {
+        code: error.code,
+        message: error.message,
+      });
+      watchlistRedirect("error", getProductExtractionErrorMessage(error));
+    }
+
+    console.error("Unexpected product extraction failure.", error);
+    watchlistRedirect(
+      "error",
+      "The product could not be retrieved. Please try again.",
+    );
+  }
+
+  const { product } = resolution;
 
   const { error } = await supabase.from("tracked_products").insert({
     user_id: userId,
-    retailer,
-    product_url: productUrl,
-    product_name: productName,
-    image_url: imageUrl,
-    current_price: currentPrice,
+    retailer: product.sourceName,
+    source_domain: product.sourceDomain,
+    product_url: product.canonicalUrl,
+    product_name: product.name,
+    image_url: product.imageUrl,
+    current_price: product.currentPrice,
+    currency: product.currency,
+    product_type: product.productType,
+    price_kind: product.priceKind,
+    extraction_confidence: product.confidence,
+    site_profile_id: resolution.siteProfileId,
     target_price: targetPrice,
   });
 
